@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 import psycopg
 from psycopg.types.json import Jsonb
 
+from scheduler_auth import is_scheduler
 from planner import MOSCOW, handle, message, new_state, scheduled
 
 TOKEN = os.environ["BOT_TOKEN"]
@@ -122,6 +123,8 @@ def deliver():
                     if error.code != 400 or method != "answerCallbackQuery":
                         raise
                 db.execute("DELETE FROM planner_outbox WHERE id = %s", (row_id,))
+            if method == "sendMessage" and payload.get("text", "").startswith("Напоминание · "):
+                logging.warning("Telegram accepted a due reminder")
 
 
 def private_update(update):
@@ -156,9 +159,14 @@ def app(environ, start_response):
                 raw = environ["wsgi.input"].read(int(environ["CONTENT_LENGTH"]))
                 private_update(json.loads(raw))
         elif (path, method) == ("/tick", "POST"):
-            if not hmac.compare_digest(environ.get("HTTP_AUTHORIZATION", ""), f"Bearer {CRON_SECRET}"):
+            authorization = environ.get("HTTP_AUTHORIZATION", "")
+            audience = os.environ["RENDER_EXTERNAL_URL"].rstrip("/") + "/tick"
+            shared_secret = hmac.compare_digest(authorization, f"Bearer {CRON_SECRET}")
+            if not shared_secret and not is_scheduler(authorization, audience):
                 status = "403 Forbidden"
-            elif OWNER_ID:
+            elif not OWNER_ID:
+                status = "503 Service Unavailable"
+            else:
                 update_state()
                 deliver()
         else:

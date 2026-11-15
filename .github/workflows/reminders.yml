@@ -1,0 +1,44 @@
+name: Telegram reminder checks
+on:
+  schedule:
+    - cron: '1,13,25,37,49 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/reminders.yml]
+
+permissions:
+  id-token: write
+
+concurrency:
+  group: telegram-reminder-check
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      TICK_URL: https://my-planner-bot-fe44.onrender.com/tick
+    steps:
+      - name: Check due reminders
+        shell: bash
+        run: |
+          set -euo pipefail
+          audience="$(jq -rn --arg url "$TICK_URL" '$url | @uri')"
+          for attempt in 1 2 3 4 5; do
+            token="$(curl -fsS --max-time 12 \
+              -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$audience" | jq -er '.value')"
+            echo "::add-mask::$token"
+            if status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 45 \
+              --request POST --header "Authorization: Bearer $token" "$TICK_URL")"; then
+              if [[ "$status" == 200 ]]; then
+                echo "Render accepted the reminder check."
+                exit 0
+              fi
+            fi
+            echo "Reminder check attempt $attempt returned HTTP $status."
+            if [[ "$attempt" != 5 ]]; then sleep 20; fi
+          done
+          exit 1
