@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: my-planner-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py && gunicorn app:app --bind 0.0.0.0:$PORT --worker-class gthread --threads 4 --timeout 80
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
