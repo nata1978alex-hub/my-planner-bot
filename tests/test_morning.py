@@ -23,12 +23,12 @@ class MorningTests(unittest.TestCase):
                 self.assertEqual(day_details(moscow(2026, 12, day))[:2], value)
 
     def test_solar_month_changes_at_the_instant_not_midnight(self):
-        # Dec 7 solar term around 05:50 Moscow and Feb 4 around 04:46 Moscow.
+        # Dec 7 solar term around 05:53 Moscow and Feb 4 around 04:46 Moscow.
         # Almanacs give the after-transition officer for the whole Chinese date.
         fixtures = (
             (moscow(2026, 12, 6), ("甲寅", "平")),
             (moscow(2026, 12, 7, 5), ("乙卯", "定")),
-            (moscow(2026, 12, 7, 5, 53), ("乙卯", "平")),
+            (moscow(2026, 12, 7, 5, 55), ("乙卯", "平")),
             (moscow(2026, 12, 8), ("丙辰", "定")),
             (moscow(2027, 2, 3), ("癸丑", "建")),
             (moscow(2027, 2, 4, 4, 44), ("甲寅", "除")),

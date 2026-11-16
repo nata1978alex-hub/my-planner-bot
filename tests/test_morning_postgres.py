@@ -63,7 +63,8 @@ class PostgresMorningTests(unittest.TestCase):
             app.app(environ, lambda status, headers: statuses.append(status))
             return statuses
 
-        with patch.object(app, "connect", side_effect=connect), patch.object(app, "deliver"), \
+        with patch.dict(os.environ, variables), patch.object(app, "connect", side_effect=connect), \
+                patch.object(app, "deliver"), \
                 patch.object(app, "datetime", wraps=datetime) as clock:
             clock.now.return_value = datetime(2026, 12, 7, 5, tzinfo=MOSCOW)
             with ThreadPoolExecutor(max_workers=2) as pool:
