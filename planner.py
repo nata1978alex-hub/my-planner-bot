@@ -1,8 +1,11 @@
 """Planner rules. The web service supplies storage and Telegram delivery."""
 import calendar
+import logging
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
+
+from bazi import day_details
 
 MOSCOW = ZoneInfo("Europe/Moscow")
 HELP = """Мой планировщик
@@ -63,6 +66,79 @@ def today(state, day):
     affirmation = state["affirmation"]
     return [message(f"План на {day}" + (f"\n{description}" if description else "")
                     + (f"\n\n{affirmation}" if affirmation else "")), *task_list(state)]
+
+
+WEEKDAYS = ("понедельник", "вторник", "среда", "четверг",
+            "пятница", "суббота", "воскресенье")
+
+
+def morning_affirmation(history, day, fallback):
+    latest = None
+    selected = fallback
+    for entry in history if isinstance(history, list) else ():
+        if not isinstance(entry, dict):
+            continue
+        text = entry.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        try:
+            effective = date.fromisoformat(entry["effective_from"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if effective <= day and (latest is None or effective >= latest):
+            latest, selected = effective, text
+    return selected
+
+
+def morning_plan(state, day, bazi_profile, affirmations_history):
+    lines = ["🌅 Доброе утро!", f"📅 {day:%d.%m.%Y}, {WEEKDAYS[day.weekday()]}"]
+    try:
+        pillar, officer, default_name = day_details(datetime.combine(day, time(5), MOSCOW))
+    except Exception:
+        # Keep the morning plan and due reminders available if calendar data fails.
+        logging.error("Could not calculate the morning calendar")
+        lines.extend(["", "🐉 Календарь Ба-цзы временно недоступен."])
+    else:
+        profile = bazi_profile.get(officer) if isinstance(bazi_profile, dict) else None
+        name = profile.get("name") if isinstance(profile, dict) else None
+        description = profile.get("text") if isinstance(profile, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            name = default_name
+        lines.extend(["", "🐉 Календарь Ба-цзы", f"Иероглифы дня: {pillar}",
+                      f"Управитель: {name} ({officer})"])
+        if isinstance(description, str) and description.strip():
+            lines.extend(["", "🌿 Характеристика дня", description,
+                          "Традиционная трактовка. Не откладывай необходимое лечение из-за календаря."])
+
+    note = state["days"].get(day.isoformat())
+    if note:
+        lines.extend(["", "✨ Особенности сегодняшнего дня", note])
+    affirmation = morning_affirmation(affirmations_history, day, state["affirmation"])
+    if affirmation:
+        lines.extend(["", "☀️ Моя аффирмация", affirmation])
+
+    upcoming = sorted(
+        (datetime.fromisoformat(item["due"]).astimezone(MOSCOW), item["text"])
+        for item in state["reminders"].values()
+    )
+    reminders = [f"• {due:%H:%M} — {title}" for due, title in upcoming if due.date() == day]
+    lines.extend(["", "🔔 Напоминания на сегодня", *(reminders or ["Напоминаний нет."]),
+                  "", "📋 Задачи на сегодня"])
+
+    tasks = task_list(state)
+    heading = "\n".join(lines)
+    _, first_task = tasks[0]
+    combined = f'{heading}\n{first_task["text"]}'
+    if len(combined) <= 3500:
+        return [("sendMessage", {**first_task, "text": combined}), *tasks[1:]]
+
+    # Editable descriptions can be long. Keep all content and existing task buttons.
+    blocks = (line[offset:offset + 3500] for line in lines
+              for offset in range(0, max(1, len(line)), 3500))
+    return [
+        *(message(page) for page in chunks(blocks) if page.strip()),
+        *tasks,
+    ]
 
 
 def reminder_list(state):
@@ -215,7 +291,7 @@ def handle(state, now, text="", action=""):
     return [message("Вечерний итог сохранён.", MENU)]
 
 
-def scheduled(state, now):
+def scheduled(state, now, *, bazi_profile=None, affirmations_history=None):
     day = now.date()
     key = day.isoformat()
     previous = (day - timedelta(days=1)).isoformat()
@@ -226,7 +302,7 @@ def scheduled(state, now):
             continue
         sent[name] = key
         if name == "morning":
-            output.extend(today(state, key))
+            output.extend(morning_plan(state, day, bazi_profile, affirmations_history))
             if not state["journal"].get(previous, {}).get("complete") and sent.get("evening") == previous:
                 output.append(message("Вчерашний итог ещё можно заполнить."))
                 output.append(evening(previous))

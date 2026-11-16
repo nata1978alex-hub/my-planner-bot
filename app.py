@@ -82,10 +82,14 @@ def initialize():
 def update_state(update=None):
     now = datetime.now(MOSCOW)
     with connect() as db:
-        state = db.execute("SELECT data FROM planner_state WHERE id = 1 FOR UPDATE").fetchone()[0]
         if update is None:
-            responses = scheduled(state, now)
+            state, profile, history = db.execute("""
+                SELECT data, to_jsonb(p)->'bazi_profile', to_jsonb(p)->'affirmations_history'
+                FROM planner_state AS p WHERE id = 1 FOR UPDATE
+            """).fetchone()
+            responses = scheduled(state, now, bazi_profile=profile, affirmations_history=history)
         else:
+            state = db.execute("SELECT data FROM planner_state WHERE id = 1 FOR UPDATE").fetchone()[0]
             processed = db.execute(
                 "INSERT INTO planner_updates VALUES (%s) ON CONFLICT DO NOTHING RETURNING id",
                 (update["update_id"],),
