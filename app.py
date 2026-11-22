@@ -1,4 +1,5 @@
 """Telegram webhook and scheduled jobs, served by Gunicorn."""
+import copy
 import hashlib
 import hmac
 import json
@@ -82,14 +83,15 @@ def initialize():
 def update_state(update=None):
     now = datetime.now(MOSCOW)
     with connect() as db:
+        state, profile, history = db.execute("""
+            SELECT data, to_jsonb(p)->'bazi_profile', to_jsonb(p)->'affirmations_history'
+            FROM planner_state AS p WHERE id = 1 FOR UPDATE
+        """).fetchone()
+        history = [] if history is None else history
+        previous_history = copy.deepcopy(history)
         if update is None:
-            state, profile, history = db.execute("""
-                SELECT data, to_jsonb(p)->'bazi_profile', to_jsonb(p)->'affirmations_history'
-                FROM planner_state AS p WHERE id = 1 FOR UPDATE
-            """).fetchone()
             responses = scheduled(state, now, bazi_profile=profile, affirmations_history=history)
         else:
-            state = db.execute("SELECT data FROM planner_state WHERE id = 1 FOR UPDATE").fetchone()[0]
             processed = db.execute(
                 "INSERT INTO planner_updates VALUES (%s) ON CONFLICT DO NOTHING RETURNING id",
                 (update["update_id"],),
@@ -99,10 +101,13 @@ def update_state(update=None):
             callback = update.get("callback_query")
             incoming = callback["message"] if callback else update["message"]
             responses = handle(state, now, incoming.get("text", "") if not callback else "",
-                               callback.get("data", "") if callback else "")
+                               callback.get("data", "") if callback else "",
+                               affirmations_history=history)
             if callback:
                 responses.insert(0, ("answerCallbackQuery", {"callback_query_id": callback["id"]}))
         db.execute("UPDATE planner_state SET data = %s WHERE id = 1", (Jsonb(state),))
+        if history != previous_history:
+            db.execute("UPDATE planner_state SET affirmations_history = %s WHERE id = 1", (Jsonb(history),))
         for method, payload in responses:
             if method != "answerCallbackQuery":
                 payload["chat_id"] = OWNER_ID

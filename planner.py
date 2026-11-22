@@ -5,6 +5,7 @@ import re
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from affirmation_flow import active_entry, handle_affirmation_flow
 from bazi import day_details
 from reminder_flow import handle_reminder_flow, resume_buttons
 
@@ -18,7 +19,8 @@ HELP = """Мой планировщик
 /remind 2026-12-01 18:30 Текст — напомнить в указанное время
 /reminders — список напоминаний
 /day 2026-12-01 甲子 День грабителя — описание дня и два иероглифа
-/affirm Текст — утренняя аффирмация
+/affirm Текст — новая аффирмация с выбором даты
+/affirmations — текущая и будущие аффирмации
 /evening — вечерний итог
 /report 2026-12 — отчёт за месяц"""
 MENU = [
@@ -26,6 +28,7 @@ MENU = [
      {"text": "Добавить задачу", "callback_data": "add"}],
     [{"text": "Вечерний итог", "callback_data": "evening"},
      {"text": "Напоминания", "callback_data": "reminders"}],
+    [{"text": "Аффирмации", "callback_data": "af:list:0"}],
 ]
 
 
@@ -74,21 +77,8 @@ WEEKDAYS = ("понедельник", "вторник", "среда", "четв�
 
 
 def morning_affirmation(history, day, fallback):
-    latest = None
-    selected = fallback
-    for entry in history if isinstance(history, list) else ():
-        if not isinstance(entry, dict):
-            continue
-        text = entry.get("text")
-        if not isinstance(text, str) or not text.strip():
-            continue
-        try:
-            effective = date.fromisoformat(entry["effective_from"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if effective <= day and (latest is None or effective >= latest):
-            latest, selected = effective, text
-    return selected
+    selected = active_entry(history, day)
+    return selected["text"] if selected else fallback
 
 
 def morning_plan(state, day, bazi_profile, affirmations_history):
@@ -205,7 +195,10 @@ def add_item(state, field, item):
     state[field][key] = item
 
 
-def handle(state, now, text="", action=""):
+def handle(state, now, text="", action="", *, affirmations_history=None):
+    affirmation_response = handle_affirmation_flow(state, affirmations_history, now, text, action)
+    if affirmation_response is not None:
+        return affirmation_response
     flow = handle_reminder_flow(state, now, text, action)
     if flow is not None:
         if text.strip().split(" ", 1)[0].split("@", 1)[0].lower() == "/cancel":
@@ -265,11 +258,6 @@ def handle(state, now, text="", action=""):
                 return [message("Пример: /day 2026-12-01 甲子 День грабителя")]
             state["days"][stamp] = description[:750]
             return [message(f"Описание сохранено на {stamp}.")]
-        if command == "/affirm":
-            if not argument:
-                return [message("Отправь /affirm и текст новой аффирмации.")]
-            state["affirmation"] = argument[:750]
-            return [message("Аффирмация сохранена.")]
         if command == "/evening":
             return [*task_list(state), evening(day)]
         if command == "/report":

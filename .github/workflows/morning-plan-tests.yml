@@ -1,7 +1,7 @@
 name: Planner regression tests
 on:
   push:
-    branches: [feature/natural-reminders]
+    branches: [feature/affirmation-history]
   workflow_dispatch:
 
 permissions:
