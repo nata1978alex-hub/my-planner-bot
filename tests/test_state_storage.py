@@ -55,16 +55,57 @@ class StateStorageTests(unittest.TestCase):
             self.assertEqual(stamp.isoformat(), "2026-11-22")
             self.assertEqual(columns_before, db.execute("SELECT attname FROM pg_attribute WHERE attrelid = 'planner_state'::regclass AND attnum>0").fetchall())
 
-    def test_payload_is_used_when_legacy_data_also_exists(self):
+    def test_existing_data_remains_authoritative_when_both_have_values(self):
         with self.connect() as db:
             db.execute("CREATE TABLE planner_state (id integer PRIMARY KEY, data jsonb, payload jsonb)")
-            db.execute("INSERT INTO planner_state VALUES (1, %s, %s)",
-                       (Jsonb({"legacy": "untouched"}), Jsonb(new_state())))
-            self.assertEqual(state_column(db), "payload")
-            state, _, _ = load_state(db)
-            state["affirmation"] = "Новый текст"
-            save_state(db, state)
-            self.assertEqual(db.execute("SELECT data FROM planner_state").fetchone()[0], {"legacy": "untouched"})
+            state = new_state()
+            state["tasks"] = {"1": "Рабочая задача"}
+            untouched = {"other": "untouched"}
+            db.execute("INSERT INTO planner_state VALUES (1, %s, %s)", (Jsonb(state), Jsonb(untouched)))
+            self.assertEqual(state_column(db), "data")
+            actual, _, _ = load_state(db)
+            actual["pending"] = ["task", "2026-11-22"]
+            save_state(db, actual)
+            saved, payload = db.execute("SELECT data, payload FROM planner_state").fetchone()
+            self.assertEqual(saved["tasks"], state["tasks"])
+            self.assertEqual(payload, untouched)
+
+    def test_null_payload_never_replaces_working_data(self):
+        for payload in (None, Jsonb(None)):
+            with self.subTest(payload=payload):
+                with self.connect() as db:
+                    db.execute("DROP TABLE IF EXISTS planner_state")
+                    db.execute("CREATE TABLE planner_state (id integer PRIMARY KEY, data jsonb, payload jsonb)")
+                    original = new_state()
+                    original["tasks"] = {"1": "Задача"}
+                    db.execute("INSERT INTO planner_state VALUES (1, %s, %s)", (Jsonb(original), payload))
+                    ensure_state(db, new_state())
+                    actual, _, _ = load_state(db)
+                    self.assertEqual(actual, original)
+                    actual["affirmation"] = "Текст"
+                    save_state(db, actual)
+                    self.assertIsNone(db.execute("SELECT payload FROM planner_state").fetchone()[0])
+                    self.assertEqual(load_state(db)[0]["tasks"], original["tasks"])
+
+    def test_empty_data_is_rejected_instead_of_switching_to_payload(self):
+        with self.connect() as db:
+            db.execute("CREATE TABLE planner_state (id integer PRIMARY KEY, data jsonb, payload jsonb)")
+            db.execute("INSERT INTO planner_state VALUES (1, NULL, %s)", (Jsonb(new_state()),))
+        with self.assertRaises(StateStorageError):
+            with self.connect() as db:
+                ensure_state(db, new_state())
+        with self.connect() as db:
+            self.assertIsNone(db.execute("SELECT data FROM planner_state").fetchone()[0])
+
+    def test_null_payload_only_row_is_not_reinitialized(self):
+        with self.connect() as db:
+            db.execute("CREATE TABLE planner_state (id integer PRIMARY KEY, payload jsonb)")
+            db.execute("INSERT INTO planner_state VALUES (1, NULL)")
+        with self.assertRaises(StateStorageError):
+            with self.connect() as db:
+                ensure_state(db, new_state())
+        with self.connect() as db:
+            self.assertIsNone(db.execute("SELECT payload FROM planner_state").fetchone()[0])
 
     def test_incomplete_payload_is_rejected_without_repair_or_overwrite(self):
         with self.connect() as db:
@@ -91,12 +132,21 @@ class StateStorageTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT version FROM planner_state").fetchone()[0], 8)
             self.assertEqual(load_state(db)[0]["tasks"], {"1": "Задача"})
 
-    def test_unsupported_column_type_does_not_fall_back_to_data(self):
+    def test_invalid_data_type_does_not_switch_to_payload(self):
         with self.connect() as db:
-            db.execute("CREATE TABLE planner_state (id integer PRIMARY KEY, payload text, data jsonb)")
+            db.execute("CREATE TABLE planner_state (id integer PRIMARY KEY, data text, payload jsonb)")
             db.execute("INSERT INTO planner_state VALUES (1, 'unexpected', %s)", (Jsonb(new_state()),))
         with self.assertRaises(StateStorageError):
             with self.connect() as db:
                 load_state(db)
         with self.connect() as db:
-            self.assertEqual(db.execute("SELECT payload FROM planner_state").fetchone()[0], "unexpected")
+            self.assertEqual(db.execute("SELECT data FROM planner_state").fetchone()[0], "unexpected")
+
+    def test_extra_non_json_payload_does_not_block_existing_data(self):
+        with self.connect() as db:
+            db.execute("CREATE TABLE planner_state (id integer PRIMARY KEY, data jsonb, payload text)")
+            db.execute("INSERT INTO planner_state VALUES (1, %s, 'untouched')", (Jsonb(new_state()),))
+            actual, _, _ = load_state(db)
+            self.assertEqual(actual, new_state())
+            save_state(db, actual)
+            self.assertEqual(db.execute("SELECT payload FROM planner_state").fetchone()[0], "untouched")

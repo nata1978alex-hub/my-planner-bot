@@ -15,8 +15,8 @@ def state_column(db):
           AND attnum > 0 AND NOT attisdropped
           AND attname IN ('payload', 'data')
     """).fetchall())
-    # payload is authoritative whenever it exists. A legacy data column is not mirrored.
-    name = 'payload' if 'payload' in columns else 'data'
+    # Preserve the current bot's data column. payload is only used in payload-only schemas.
+    name = 'data' if 'data' in columns else 'payload'
     if columns.get(name) not in {'json', 'jsonb'}:
         raise StateStorageError('Expected a JSON/JSONB state column named payload or data.')
     return name

@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        state-column: [data, payload]
+        state-column: [data, payload, data-with-null-payload]
     runs-on: ubuntu-latest
     timeout-minutes: 8
     services:

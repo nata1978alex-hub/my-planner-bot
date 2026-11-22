@@ -118,7 +118,7 @@ class RollbackPostgresTests(unittest.TestCase):
 
         def saved_row():
             with connect() as db:
-                return db.execute(f"SELECT {column}, bazi_profile, affirmations_history, version FROM planner_state").fetchone()
+                return db.execute(f"SELECT {column}, bazi_profile, affirmations_history, version, to_jsonb(p) FROM planner_state AS p").fetchone()
 
         def confirm():
             draft = saved_row()[0]["affirmation_draft"]
