@@ -6,6 +6,7 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from bazi import day_details
+from reminder_flow import handle_reminder_flow, resume_buttons
 
 MOSCOW = ZoneInfo("Europe/Moscow")
 HELP = """Мой планировщик
@@ -147,7 +148,7 @@ def reminder_list(state):
              for _, item in upcoming] or ["Активных напоминаний нет."]
     buttons = [[{"text": f'Отменить · {item["text"][:35]}',
                  "callback_data": f"cancel:{key}"}] for key, item in upcoming[:30]]
-    return [message(page, buttons + MENU if index == 0 else None)
+    return [message(page, buttons + (resume_buttons(state) or []) + MENU if index == 0 else None)
             for index, page in enumerate(chunks(lines))]
 
 
@@ -205,6 +206,11 @@ def add_item(state, field, item):
 
 
 def handle(state, now, text="", action=""):
+    flow = handle_reminder_flow(state, now, text, action)
+    if flow is not None:
+        if text.strip().split(" ", 1)[0].split("@", 1)[0].lower() == "/cancel":
+            flow[0][1]["reply_markup"] = {"inline_keyboard": (resume_buttons(state) or []) + MENU}
+        return flow
     day = now.date().isoformat()
     if action:
         kind, _, value = action.partition(":")

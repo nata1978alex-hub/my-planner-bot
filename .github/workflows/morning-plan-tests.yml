@@ -1,7 +1,7 @@
-name: Morning plan tests
+name: Planner regression tests
 on:
   push:
-    branches: [feature/bazi-morning-plan]
+    branches: [feature/natural-reminders]
   workflow_dispatch:
 
 permissions:
