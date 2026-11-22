@@ -14,6 +14,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from scheduler_auth import is_scheduler
+from state_storage import ensure_state, load_state, save_state
 from planner import MOSCOW, handle, message, new_state, scheduled
 
 TOKEN = os.environ["BOT_TOKEN"]
@@ -70,8 +71,7 @@ def telegram(method, payload):
 def initialize():
     with connect() as db:
         db.execute(SCHEMA)
-        db.execute("INSERT INTO planner_state VALUES (1, %s) ON CONFLICT DO NOTHING",
-                   (Jsonb(new_state()),))
+        ensure_state(db, new_state())
     telegram("setWebhook", {
         "url": os.environ["RENDER_EXTERNAL_URL"].rstrip("/") + "/telegram",
         "secret_token": WEBHOOK_SECRET,
@@ -83,10 +83,7 @@ def initialize():
 def update_state(update=None):
     now = datetime.now(MOSCOW)
     with connect() as db:
-        state, profile, history = db.execute("""
-            SELECT data, to_jsonb(p)->'bazi_profile', to_jsonb(p)->'affirmations_history'
-            FROM planner_state AS p WHERE id = 1 FOR UPDATE
-        """).fetchone()
+        state, profile, history = load_state(db)
         history = [] if history is None else history
         previous_history = copy.deepcopy(history)
         if update is None:
@@ -105,7 +102,7 @@ def update_state(update=None):
                                affirmations_history=history)
             if callback:
                 responses.insert(0, ("answerCallbackQuery", {"callback_query_id": callback["id"]}))
-        db.execute("UPDATE planner_state SET data = %s WHERE id = 1", (Jsonb(state),))
+        save_state(db, state)
         if history != previous_history:
             db.execute("UPDATE planner_state SET affirmations_history = %s WHERE id = 1", (Jsonb(history),))
         for method, payload in responses:

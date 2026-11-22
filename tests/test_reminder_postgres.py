@@ -13,6 +13,8 @@ import psycopg
 from psycopg import conninfo, sql
 from psycopg.types.json import Jsonb
 
+from schema_fixture import configure_state_table
+
 from planner import MOSCOW, handle, new_state
 
 
@@ -49,9 +51,8 @@ class ReminderPostgresTests(unittest.TestCase):
         original = copy.deepcopy(state)
         profile, history = {"建": {"text": "Описание"}}, [{"effective_from": "2026-11-16", "text": "Аффирмация"}]
         with connect() as db:
-            db.execute(app.SCHEMA)
-            db.execute("ALTER TABLE planner_state ADD bazi_profile jsonb, ADD affirmations_history jsonb")
-            db.execute("INSERT INTO planner_state VALUES (1, %s, %s, %s)",
+            column = configure_state_table(db, app)
+            db.execute(f"INSERT INTO planner_state (id, {column}, bazi_profile, affirmations_history) VALUES (1, %s, %s, %s)",
                        (Jsonb(state), Jsonb(profile), Jsonb(history)))
 
         def confirm(number):
@@ -81,7 +82,7 @@ class ReminderPostgresTests(unittest.TestCase):
             # A retried Telegram update must be ignored as well.
             app.update_state(confirm(10))
             with connect() as db:
-                saved = db.execute("SELECT data FROM planner_state").fetchone()[0]
+                saved = db.execute(f"SELECT {column} FROM planner_state").fetchone()[0]
                 self.assertEqual(len(saved["reminders"]), 1)
                 self.assertEqual(saved["journal"], original["journal"])
                 self.assertEqual(saved["paused_diary"], original["paused_diary"])
@@ -107,7 +108,7 @@ class ReminderPostgresTests(unittest.TestCase):
             self.assertEqual(len(notifications), 1)
             with connect() as db:
                 saved, actual_profile, actual_history = db.execute(
-                    "SELECT data, bazi_profile, affirmations_history FROM planner_state").fetchone()
+                    f"SELECT {column}, bazi_profile, affirmations_history FROM planner_state").fetchone()
                 self.assertEqual(saved["reminders"], {})
                 self.assertEqual(saved["journal"], original["journal"])
                 self.assertEqual(saved["tasks"], original["tasks"])

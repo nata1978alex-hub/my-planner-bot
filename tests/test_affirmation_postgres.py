@@ -12,6 +12,8 @@ import psycopg
 from psycopg import conninfo, sql
 from psycopg.types.json import Jsonb
 
+from schema_fixture import configure_state_table
+
 from planner import MOSCOW, morning_affirmation, new_state
 
 
@@ -46,9 +48,8 @@ class AffirmationPostgresTests(unittest.TestCase):
             {"effective_from": "2026-12-01", "text": "Декабрьская"},
         ]
         with connect() as db:
-            db.execute(app.SCHEMA)
-            db.execute("ALTER TABLE planner_state ADD bazi_profile jsonb, ADD affirmations_history jsonb")
-            db.execute("INSERT INTO planner_state VALUES (1, %s, %s, %s)",
+            column = configure_state_table(db, app)
+            db.execute(f"INSERT INTO planner_state (id, {column}, bazi_profile, affirmations_history) VALUES (1, %s, %s, %s)",
                        (Jsonb(state), Jsonb(profile), Jsonb(history)))
 
         def incoming(number, text=None, action=None):
@@ -68,7 +69,7 @@ class AffirmationPostgresTests(unittest.TestCase):
             app.update_state(incoming(2, "/affirm С 25 ноября"))
             app.update_state(incoming(3, "25.11.2026"))
             with connect() as db:
-                saved, actual = db.execute("SELECT data, affirmations_history FROM planner_state").fetchone()
+                saved, actual = db.execute(f"SELECT {column}, affirmations_history FROM planner_state").fetchone()
                 token = saved["affirmation_draft"]["token"]
                 self.assertEqual(actual, history)
             start = Barrier(2)
@@ -84,7 +85,7 @@ class AffirmationPostgresTests(unittest.TestCase):
             app.update_state(incoming(4, action="af:confirm:" + token))
             with connect() as db:
                 saved, actual_profile, actual_history = db.execute(
-                    "SELECT data, bazi_profile, affirmations_history FROM planner_state").fetchone()
+                    f"SELECT {column}, bazi_profile, affirmations_history FROM planner_state").fetchone()
             self.assertEqual(len(actual_history), 3)
             self.assertEqual(actual_history[:2], history)
             self.assertEqual(actual_profile, profile)

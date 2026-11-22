@@ -15,6 +15,8 @@ import psycopg
 from psycopg import conninfo, sql
 from psycopg.types.json import Jsonb
 
+from schema_fixture import configure_state_table
+
 from affirmation_flow import entry_key
 from planner import MOSCOW, morning_affirmation, new_state
 from scripts.backup_affirmations import checksum, export, verify
@@ -97,9 +99,8 @@ class RollbackPostgresTests(unittest.TestCase):
             return psycopg.connect(test_url)
 
         with connect() as db:
-            db.execute(app.SCHEMA)
-            db.execute("ALTER TABLE planner_state ADD bazi_profile jsonb, ADD affirmations_history jsonb")
-            db.execute("INSERT INTO planner_state VALUES (1, %s, %s, %s)",
+            column = configure_state_table(db, app)
+            db.execute(f"INSERT INTO planner_state (id, {column}, bazi_profile, affirmations_history) VALUES (1, %s, %s, %s)",
                        (Jsonb(state), Jsonb(profile), Jsonb(initial)))
 
         now = datetime(2026, 11, 22, 12, tzinfo=MOSCOW)
@@ -117,7 +118,7 @@ class RollbackPostgresTests(unittest.TestCase):
 
         def saved_row():
             with connect() as db:
-                return db.execute("SELECT data, bazi_profile, affirmations_history FROM planner_state").fetchone()
+                return db.execute(f"SELECT {column}, bazi_profile, affirmations_history, version FROM planner_state").fetchone()
 
         def confirm():
             draft = saved_row()[0]["affirmation_draft"]
@@ -150,6 +151,7 @@ class RollbackPostgresTests(unittest.TestCase):
             self.assertTrue(any(e.get("status") == "superseded" for e in after[2]))
             self.assertEqual(len(after[2]), 4)
             self.assertEqual(after[1], profile)
+            self.assertEqual(after[3], 7)
             for field in ("tasks", "reminders", "journal", "days", "affirmation"):
                 self.assertEqual(after[0][field], state[field])
 
@@ -161,6 +163,12 @@ class RollbackPostgresTests(unittest.TestCase):
             actual_source = (rollback_path / "planner.py").read_text()
             from scripts.prepare_rollback import OLD_CHECK, COMPATIBLE_CHECK
             self.assertEqual(actual_source, previous_source.replace(OLD_CHECK, COMPATIBLE_CHECK, 1))
+            from scripts.prepare_rollback import compatible_app
+            old_application = subprocess.run(
+                ["git", "show", PREVIOUS_COMMIT + ":app.py"], check=True, capture_output=True, text=True,
+            ).stdout
+            self.assertEqual((rollback_path / "app.py").read_text(), compatible_app(old_application))
+            self.assertEqual((rollback_path / "state_storage.py").read_text(), Path("state_storage.py").read_text())
             rollback_planner = load_module("rollback_planner", rollback_path / "planner.py")
             for stamp in ("2026-11-22", "2026-11-25", "2026-11-27", "2026-12-01"):
                 day = date.fromisoformat(stamp)

@@ -9,6 +9,10 @@ permissions:
 
 jobs:
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        state-column: [data, payload]
     runs-on: ubuntu-latest
     timeout-minutes: 8
     services:
@@ -25,6 +29,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
+      PLANNER_TEST_STATE_COLUMN: ${{ matrix.state-column }}
       PLANNER_TEST_DATABASE_URL: postgresql://postgres:planner-test@127.0.0.1:5432/planner_test
     steps:
       - uses: actions/checkout@v4

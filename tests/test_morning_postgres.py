@@ -13,6 +13,8 @@ import psycopg
 from psycopg import conninfo, sql
 from psycopg.types.json import Jsonb
 
+from schema_fixture import configure_state_table
+
 from planner import MOSCOW, new_state
 
 
@@ -48,9 +50,8 @@ class PostgresMorningTests(unittest.TestCase):
             {"effective_from": "2027-01-01", "text": "Будущая аффирмация"},
         ]
         with connect() as db:
-            db.execute(app.SCHEMA)
-            db.execute("ALTER TABLE planner_state ADD bazi_profile jsonb, ADD affirmations_history jsonb")
-            db.execute("INSERT INTO planner_state VALUES (1, %s, %s, %s)",
+            column = configure_state_table(db, app)
+            db.execute(f"INSERT INTO planner_state (id, {column}, bazi_profile, affirmations_history) VALUES (1, %s, %s, %s)",
                        (Jsonb(state), Jsonb(profile), Jsonb(history)))
 
         start = Barrier(2)
@@ -87,7 +88,7 @@ class PostgresMorningTests(unittest.TestCase):
         with connect() as db:
             messages = db.execute("SELECT payload FROM planner_outbox ORDER BY id").fetchall()
             saved, saved_profile, saved_history = db.execute(
-                "SELECT data, bazi_profile, affirmations_history FROM planner_state").fetchone()
+                f"SELECT {column}, bazi_profile, affirmations_history FROM planner_state").fetchone()
         self.assertEqual(len(messages), 1)
         self.assertIn("Описание из PostgreSQL", messages[0][0]["text"])
         self.assertIn("Аффирмация из PostgreSQL", messages[0][0]["text"])
