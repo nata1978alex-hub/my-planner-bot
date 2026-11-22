@@ -13,6 +13,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from scheduler_auth import is_scheduler
+from state_storage import ensure_state, load_state, save_state
 from planner import MOSCOW, handle, message, new_state, scheduled
 
 TOKEN = os.environ["BOT_TOKEN"]
@@ -69,8 +70,7 @@ def telegram(method, payload):
 def initialize():
     with connect() as db:
         db.execute(SCHEMA)
-        db.execute("INSERT INTO planner_state VALUES (1, %s) ON CONFLICT DO NOTHING",
-                   (Jsonb(new_state()),))
+        ensure_state(db, new_state())
     telegram("setWebhook", {
         "url": os.environ["RENDER_EXTERNAL_URL"].rstrip("/") + "/telegram",
         "secret_token": WEBHOOK_SECRET,
@@ -83,13 +83,10 @@ def update_state(update=None):
     now = datetime.now(MOSCOW)
     with connect() as db:
         if update is None:
-            state, profile, history = db.execute("""
-                SELECT data, to_jsonb(p)->'bazi_profile', to_jsonb(p)->'affirmations_history'
-                FROM planner_state AS p WHERE id = 1 FOR UPDATE
-            """).fetchone()
+            state, profile, history = load_state(db)
             responses = scheduled(state, now, bazi_profile=profile, affirmations_history=history)
         else:
-            state = db.execute("SELECT data FROM planner_state WHERE id = 1 FOR UPDATE").fetchone()[0]
+            state = load_state(db)[0]
             processed = db.execute(
                 "INSERT INTO planner_updates VALUES (%s) ON CONFLICT DO NOTHING RETURNING id",
                 (update["update_id"],),
@@ -102,7 +99,7 @@ def update_state(update=None):
                                callback.get("data", "") if callback else "")
             if callback:
                 responses.insert(0, ("answerCallbackQuery", {"callback_query_id": callback["id"]}))
-        db.execute("UPDATE planner_state SET data = %s WHERE id = 1", (Jsonb(state),))
+        save_state(db, state)
         for method, payload in responses:
             if method != "answerCallbackQuery":
                 payload["chat_id"] = OWNER_ID

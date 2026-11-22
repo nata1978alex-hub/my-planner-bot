@@ -77,7 +77,7 @@ def morning_affirmation(history, day, fallback):
     latest = None
     selected = fallback
     for entry in history if isinstance(history, list) else ():
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or entry.get("status", "active") != "active":
             continue
         text = entry.get("text")
         if not isinstance(text, str) or not text.strip():
